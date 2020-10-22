@@ -82,7 +82,7 @@ void plotKernel(uchar4* d_out, float* d_density, float3* d_particals, int w, int
 
     if (sys == 0) {// plot density
         float maximum = float(NUM);
-        float l = d_density[idx] * maximum*0.2f;
+        float l = d_density[idx] * maximum;
         float s = 1;
         int hc = (180 + (int)(360.0f * d_density[idx] * maximum)) % 360;
         float m1, m2;
@@ -132,33 +132,19 @@ void plotKernel(uchar4* d_out, float* d_density, float3* d_particals, int w, int
    
 }
 __global__
-void makeHistKernel(float3* d_particals, float* d_density, int w, int h) {
+void makeHistKernel(float3* d_particals, float* d_density, int w, int h, int* d_num) {
     const int col = threadIdx.x + blockDim.x * blockIdx.x;
     const int row = threadIdx.y + blockDim.y * blockIdx.y;
     const int idx = flatten(col, row, w, h);
 
-    float x = d_particals[idx].x, p = d_particals[idx].y;
-    int mapIdx = getBin(x, p, w);
-    d_density[mapIdx] += 1 / float(NUM);
+    float x = d_particals[idx].x, p = d_particals[idx].y, time = d_particals[idx].z;
+    if (time != -1) {
+        int mapIdx = getBin(x, p, w);
+        d_density[mapIdx] += 1 / float(d_num[0]);
+    }
 }
-__global__
-void genRandomKernel(curandState* globalState, float3* d_particals, int w, int h) {
-    const int col = threadIdx.x + blockDim.x * blockIdx.x;
-    const int row = threadIdx.y + blockDim.y * blockIdx.y;
-    const int idx = flatten(col, row, w, h);
-    curandState localState = globalState[idx];
-    //float x = curand_uniform(&localState) - 0.5f;
-    //float p = curand_uniform(&localState) - 0.5f;
-    float x, p = 0.0f;
-    //while(idx < NUM){
-    x = curand_normal(&localState);
-    p = curand_normal(&localState);
-    d_particals[idx].x = x;
-    d_particals[idx].y = p;
-    d_particals[idx].z = 0.0f;
-    globalState[idx] = localState;
 
-}
+
 __global__
 void timeNextKernel(float3* d_particals, float* d_density, int w, int h) {
     const int col = threadIdx.x + blockDim.x * blockIdx.x;
@@ -170,24 +156,49 @@ void timeNextKernel(float3* d_particals, float* d_density, int w, int h) {
 
 
     float d = d_density[mapIdx], dright = d_density[mapIdx + 1], dleft = d_density[mapIdx - 1], dtop = d_density[mapIdx - w], dbottom = d_density[mapIdx + w];
-    //  calculate new x and v if V == x^4
-
+    // calculate new x and v if V == x^3 + x^2
     
     float deltaX = STEPTIME * (v / MASS);
-    float deltaV = STEPTIME * (-1.0f * x * x * x + x *PLANK * 1.0f / d * (dtop - 2.0f * d + dbottom) / (SCALE / (float(w) / 2.0f)));
-    
+    float deltaV = STEPTIME * (-3.0f * x*x -2.0f * x +  PLANK * 1.0f / d * (dtop - 2.0f * d + dbottom) / (SCALE / (float(w) / 2.0f)));
+
+    //  calculate new x and v if V == x^4
+
+    //float deltaX = STEPTIME * (v / MASS);
+    //float deltaV = STEPTIME * (-1.0f * x * x * x + x *PLANK * 1.0f / d * (dtop - 2.0f * d + dbottom) / (SCALE / (float(w) / 2.0f)));
 
     // calculate new x and v if V == Mass * omega * x^2/ 2
 
     //float  deltaX = STEPTIME * v;
     //float deltaV = STEPTIME * (-1.0f * x );
 
-    d_particals[idx].x += deltaX;
-    d_particals[idx].y += deltaV;
-    d_particals[idx].z += STEPTIME;
-
+    if (deltaX + x > SCALE || deltaX + x < -SCALE || deltaV + v > SCALE || deltaV + v < -SCALE) {
+        d_particals[idx].x = 0;
+        d_particals[idx].y = 0;
+        d_particals[idx].z = -1;
+    }
+    else {
+        d_particals[idx].x += deltaX;
+        d_particals[idx].y += deltaV;
+        d_particals[idx].z += STEPTIME;
+    }
 }
-void kernelLauncher(uchar4* d_out, float3* d_particals, float* d_density, int w, int h, int sys) {
+
+__global__
+void countParticlesKernel(float3* d_particals, int w, int h, int* d_num) {
+    const int col = threadIdx.x + blockDim.x * blockIdx.x;
+    const int row = threadIdx.y + blockDim.y * blockIdx.y;
+    const int idx = flatten(col, row, w, h);
+    float time = d_particals[idx].z;
+
+    if (time == -1)
+        d_num[0] -= 1;
+   
+}
+
+void kernelLauncher(uchar4* d_out, float3* d_particals, float* d_density, int w, int h, int sys, int* d_num) {
+    int* initialNum = new int[0];
+    initialNum[0] = NUM;
+    cudaMemcpy(d_num, initialNum, sizeof(int), cudaMemcpyHostToDevice);
     //for plot
     const dim3 blockSize(TX, TY);
     const dim3 gridSize(divUp(w, TX), divUp(h, TY));
@@ -195,24 +206,30 @@ void kernelLauncher(uchar4* d_out, float3* d_particals, float* d_density, int w,
     const dim3 blockSizePart(TX, TY);
     const dim3 gridSizePart(divUp(sqrt(NUM), TX), divUp(sqrt(NUM), TY));
     timeNextKernel <<<gridSizePart, blockSizePart >>> (d_particals, d_density, w, h);
+    countParticlesKernel <<<gridSizePart, blockSizePart >>> (d_particals, w, h, d_num);
     clearDensityAndOutArrKernel <<<gridSize, blockSize >>> (d_out, d_density, w, h, sys);
-    makeHistKernel <<<gridSize, blockSize >>> (d_particals, d_density, w, h);
+    makeHistKernel <<<gridSize, blockSize >>> (d_particals, d_density, w, h, d_num);
     plotKernel <<<gridSize, blockSize>>> (d_out, d_density, d_particals, w, h, sys);
 }
 
 
 
-void initialConditions(uchar4* d_out, float3* d_particals, float* d_density, int w, int h) {
+void initialConditions(uchar4* d_out, float3* d_particals, float* d_density, int* d_num, int w, int h) {
 
     float3* initialRandomValues = new float3[NUM];
+    int* initialNum = new int[0];
+    initialNum[0] = NUM;
     FILE* infile = fopen("random.txt", "r");
     for (int i = 0; i < NUM; i++) {
         if (fscanf(infile, "%f \t %f\t %f \n", &initialRandomValues[i].x, &initialRandomValues[i].y, &initialRandomValues[i].z) == EOF) break;
+        initialRandomValues[i].x -= 1.0f;
     }
     fclose(infile);
+
     cudaMemcpy(d_particals, initialRandomValues, NUM * sizeof(float3), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_num, initialNum, sizeof(int), cudaMemcpyHostToDevice);
 
     const dim3 blockSize(TX, TY);
     const dim3 gridSize(divUp(w, TX), divUp(h, TY));
-    makeHistKernel <<<gridSize, blockSize >>> (d_particals, d_density, w, h);
+    makeHistKernel <<<gridSize, blockSize >>> (d_particals, d_density, w, h, d_num);
 }

@@ -86,7 +86,7 @@ void render() {
     cudaGraphicsResourceGetMappedPointer((void**)&d_out, NULL, cuda_pbo_resource);
 
     for (int i = 0; i < ITERS_PER_RENDER; ++i) 
-        kernelLauncher(d_out, d_particals, d_density, W, H, sys);
+        kernelLauncher(d_out, d_particals, d_density, W, H, sys, d_num);
     
     if (iterationCount == 200) {
         float dx = SCALE / (W / 2);
@@ -105,10 +105,6 @@ void render() {
         //findRight(density);
         findAveragetV(density);
         free(density);
-        
-        
-        
-
     }
     cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0);
     char title[128];
@@ -170,12 +166,15 @@ void exitfunc() {
 int main(int argc, char** argv) {
     cudaMalloc(&d_density, W * H * sizeof(float));
     cudaMalloc(&d_particals, NUM * sizeof(float3));
-    initialConditions(d_out, d_particals, d_density, W, H);
+    cudaMalloc(&d_num, sizeof(int));
+    initialConditions(d_out, d_particals, d_density, d_num, W, H);
 
     initGLUT(&argc, argv);
     gluOrtho2D(0, W, H, 0);
     glutKeyboardFunc(keyboard);
+
     glutIdleFunc(idle);
+
     glutDisplayFunc(display);
     initPixelBuffer();
     glutMainLoop();

@@ -24,6 +24,7 @@ float3* particles = 0;
 float3* d_particals = 0;
 float* d_time = 0;
 uchar4* d_out = 0;
+int* d_num = 0;
 
 int iterationCount = 0;
 

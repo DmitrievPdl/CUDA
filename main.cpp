@@ -30,7 +30,8 @@ void getParticalsForPlot(float3* particles) {
     FILE* outfile = fopen("result.txt", "w");
 
     for (int i = 0; i < NUM; i++) {
-        fprintf(outfile, "%f \t %f \n", particles[i].x, particles[i].y);
+        if(particles[i].x != -4)
+            fprintf(outfile, "%f \t %f \n", particles[i].x, particles[i].y);
     }
     fclose(outfile);
 }
@@ -57,21 +58,52 @@ void findRight(float* density) {
     fclose(outfile);
 }
 
-void findAveragetV(float* density) {
+void findAveragetP(float* density) {
     float dp = SCALE / (H / 2);
     float dx = SCALE / (W / 2);
     FILE* outfile = fopen("result.txt", "w");
     float averagetV = 0.0f;
+    float f1 = 0.0f;
 
     for (int col = 500; col < 1500; col++) {
         averagetV = 0.0f;
+        f1 = 0.0f;
 
-        for (int row = 500; row < 1500; row++) {
-            averagetV += density[row * W + col] * p(row) * dp;
+        for (int row = 0; row < 2000; row++) {
+            averagetV += density[row * W + col] * p(row) * dp ;
         }
-
+        for (int row = 0; row < 2000; row++) {
+            f1 += density[row * W + col] * dp;
+        }
+        averagetV *= 1.0f / f1;
         fprintf(outfile, "%f \t %E \n", x(col), averagetV);
     }
+    fclose(outfile);
+}
+void findTotalN(float* density) {
+    float dp = SCALE / (H / 2);
+    float dx = SCALE / (W / 2);
+    FILE* outfile = fopen("result.txt", "at");
+    float f1 = 0.0f;
+    float TotalN = 0.0f;
+    float dns = 0.0f;
+    for (int col = 0; col < 2000; col++){
+        for (int row = 0; row < 2000; row++) {
+            dns += density[row * W + col] * NUM;
+        }
+    }
+    printf("%f \n",dns);
+    fprintf(outfile, "%f \n", dns);
+    fclose(outfile);
+}
+void findTotalNgpu(float3* particles) {
+    FILE* outfile = fopen("result.txt", "at");
+    int totalN = 0;
+    for (int i = 0; i < NUM; i++) {
+        if (particles[i].z != -1)
+            totalN += 1;
+    }
+    fprintf(outfile, "%d \n", totalN);
     fclose(outfile);
 }
 // texture and pixel objects
@@ -88,23 +120,34 @@ void render() {
     for (int i = 0; i < ITERS_PER_RENDER; ++i) 
         kernelLauncher(d_out, d_particals, d_density, W, H, sys, d_num);
     
-    if (iterationCount == 200) {
+    if ( iterationCount == 8000) {
         float dx = SCALE / (W / 2);
         float dp = SCALE / (W / 2);
         // get particals for plot
-        /*
+
         particles = new float3[NUM];
         cudaMemcpy(particles, d_particals, NUM * sizeof(float3), cudaMemcpyDeviceToHost);
         getParticalsForPlot(particles);
         free(particles);
+
         // get density for calculation
-        */
-        density = new float[W * H];
+        /*
+        //density = new float[W * H];
         cudaMemcpy(density, d_density, W * H * sizeof(float), cudaMemcpyDeviceToHost);
 
         //findRight(density);
         findAveragetV(density);
         free(density);
+        */
+        // find avarage V
+        //density = new float[W * H];
+        //cudaMemcpy(density, d_density, W * H * sizeof(float), cudaMemcpyDeviceToHost);
+        //findTotalN(density);
+
+        //particles = new float3[NUM];
+        //cudaMemcpy(particles, d_particals, NUM * sizeof(float3), cudaMemcpyDeviceToHost);
+        //findTotalNgpu(particles);
+        //free(particles);
     }
     cudaGraphicsUnmapResources(1, &cuda_pbo_resource, 0);
     char title[128];
